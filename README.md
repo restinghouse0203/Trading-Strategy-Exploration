@@ -37,7 +37,7 @@ The goal is to build a **research playground** for quantitative finance, coverin
 ---
 
 ## 📂 Project Structure
-```
+
 
 quant-strategies/
 │── data/                   # Stored market data (optional)
@@ -50,7 +50,7 @@ quant-strategies/
 │── README.md               # Project documentation (this file)
 │── requirements.txt        # Python dependencies
 
-```
+
 
 ---
 
