@@ -1,9 +1,9 @@
 # Trading-Strategy-Exploration
 
 ```markdown
-# 📊 Quantitative Trading Strategies in Python
+# 📊 Quantitative Trading Strategies in Python & R
 
-This repository explores and backtests various **algorithmic trading strategies and portfolio optimization techniques** using Python.  
+This repository explores and backtests various **trading strategies and portfolio optimization techniques** using Python and R.  
 The goal is to build a **research playground** for quantitative finance, covering both **single-asset trading strategies** and **multi-asset portfolio methods**.
 
 ---
