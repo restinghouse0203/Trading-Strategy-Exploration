@@ -1,0 +1,187 @@
+---
+title: "Trading Strategies Simulation on Binary Return Model"
+author: ""
+date: "2025-9-10"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 7,
+  fig.height = 4.5
+)
+set.seed(42)  # reproducibility
+```
+
+## Introduction
+
+We study a simple binary-return investment model and compare three strategies:
+- all-in reinvestment each round,
+- fixed stake of $1 per round, and
+- fixed stake of $10 per round.
+
+In each round, investing an amount `I` yields, with equal probability (0.5 each):
+- up factor: return = 1.55 I
+- down factor: return = 0.55 I
+
+The one-period expected return is E[R] = 0.5·1.55·I + 0.5·0.55·I = 1.05·I (a 5% expected gain per dollar invested). We then simulate the strategies.
+
+## Investment model: helpers and quick checks
+
+```{r invest-helpers}
+# Binary-return investment draw for amount I.
+# Returns a length-n vector of realized payoffs.
+invest_draw <- function(investment_amount,
+                        n = 1,
+                        p_up = 0.5,
+                        up_factor = 1.55,
+                        down_factor = 0.55) {
+  multipliers <- sample(c(up_factor, down_factor),
+                        size = n, replace = TRUE,
+                        prob = c(p_up, 1 - p_up))
+  investment_amount * multipliers
+}
+
+# Single-draw wrapper mirroring the original invest(I)
+invest <- function(I) {
+  invest_draw(I, n = 1)
+}
+
+# Alternative vectorized way
+#invest_alternative <- function(I, n = 3) {
+#  Rseq <- c(1.55 * I, 0.55 * I)
+#  sample(Rseq, n, replace = TRUE)
+#}
+#invest_alternative(100, n = 3)
+```
+
+### Strategy simulators
+
+```{r strategy-simulators}
+# Strategy 1: All-in reinvest each period.
+# wealth[t] is wealth after t-1 rounds; wealth[1] = initial_wealth.
+simulate_strategy_all_in <- function(initial_wealth,
+                                     num_rounds = 200,
+                                     p_up = 0.5,
+                                     up_factor = 1.55,
+                                     down_factor = 0.55) {
+  wealth <- numeric(num_rounds + 1)
+  wealth[1] <- initial_wealth
+  for (t in 2:(num_rounds + 1)) {
+    multiplier <- sample(c(up_factor, down_factor), 1,
+                         prob = c(p_up, 1 - p_up))
+    wealth[t] <- wealth[t - 1] * multiplier
+  }
+  list(path = wealth, final = wealth[num_rounds + 1])
+}
+
+# Strategy 2 (generic): Invest a fixed dollar amount `stake` each period.
+# Each round: withdraw `stake`, add realized payoff on that stake.
+simulate_strategy_fixed_bet <- function(initial_wealth,
+                                        stake,
+                                        num_rounds = 200,
+                                        p_up = 0.5,
+                                        up_factor = 1.55,
+                                        down_factor = 0.55) {
+  wealth <- numeric(num_rounds)
+  # After first round: start with initial_wealth - stake + payoff(stake)
+  wealth[1] <- initial_wealth - stake + invest_draw(stake, 1, p_up, up_factor, down_factor)
+  for (t in 2:(num_rounds)) {
+    wealth[t] <- wealth[t - 1] - stake + invest_draw(stake, 1, p_up, up_factor, down_factor)
+  }
+  list(path = wealth, final = wealth[num_rounds])
+}
+
+# Helper: run many independent simulations and return vector of finals
+replicate_finals <- function(strategy_fun, S = 500, ...) {
+  finals <- numeric(S)
+  for (s in 1:S) finals[s] <- strategy_fun(...)$final
+  finals
+}
+```
+
+### One-step expectations
+
+```{r expectations}
+I <- 1
+E_R <- 0.5 * 1.55 * I + 0.5 * 0.55 * I
+E_R
+
+# Analytical expectations for T rounds
+W0 <- 200
+T  <- 200
+
+# All-in: E[W_T] = W0 * (E[multiplier])^T, where multiplier in {1.55, 0.55}
+E_multiplier <- 0.5 * 1.55 + 0.5 * 0.55  # = 1.05
+E_WT_all_in  <- W0 * (E_multiplier ^ T)
+E_WT_all_in
+
+# Fixed stake s: each round adds expected net (E[R]-s) = (1.05-1)*s = 0.05*s
+# So E[W_T] = W0 + 0.05 * s * T
+expectation_fixed_bet <- function(W0, s, T) W0 + 0.05 * s * T
+expectation_fixed_bet(W0, s = 1,  T)
+expectation_fixed_bet(W0, s = 10, T)
+```
+
+## Strategy 1: All-in reinvestment
+
+```{r strategy1-path-and-sim, fig.asp=0.6}
+W0 <- 100
+T  <- 200
+
+# A single sample path
+one_path <- simulate_strategy_all_in(W0, T)
+plot(seq(0, T), one_path$path, type = "l", lwd = 2,
+     xlab = "Round", ylab = "Wealth",
+     main = "Strategy 1 (All-in): one simulated path")
+
+# Distribution of final wealth across S simulations
+S <- 1000
+finals_all_in <- replicate_finals(simulate_strategy_all_in, S = S, initial_wealth = W0, num_rounds = T)
+hist(finals_all_in, breaks = 20, col = "gray80", border = NA,
+     main = sprintf("Strategy 1 (All-in): final wealth over %d sims", S),
+     xlab = "Final wealth")
+
+c(mean = format(mean(finals_all_in),scientific=FALSE), sd = format(sd(finals_all_in),scientific=FALSE),
+  min = format(min(finals_all_in),scientific=TRUE), max = format(max(finals_all_in),scientific=FALSE), var = format(var(finals_all_in),scientific=FALSE))
+```
+As shown in the histogram, most of the time we loss all the money by going all-in.
+
+## Strategy 2: Fixed stake each round (s = 1; s = 10)
+
+```{r}
+W0 <- 200; T <- 200
+
+# s = 1 (expected mean ≈ 200 + 0.05*1*200 = 210, sd ≈ sqrt(200)*0.5 ≈ 7.07)
+s <- 1
+finals_s1 <- replicate(1000, simulate_strategy_fixed_bet(W0, s, T)$final)
+summary(finals_s1); range(finals_s1)
+hist(finals_s1, breaks = 30, col = "gray80", border = NA,
+     main = "Strategy 2 (Stake = $1): final wealth over 1000 sims",
+     xlab = "Final wealth")
+
+# s = 10 (expected mean ≈ 300, sd ≈ sqrt(200)*0.5*10 ≈ 70.7)
+s <- 10
+finals_s10 <- replicate(1000, simulate_strategy_fixed_bet(W0, s, T)$final)
+summary(finals_s10); range(finals_s10)
+hist(finals_s10, breaks = 20, col = "gray80", border = NA,
+     main = "Strategy 2 (Stake = $10): final wealth over 1000 sims",
+     xlab = "Final wealth")
+```
+As shown in the histogram, the Final wealth is more stable about 210 for s=1 and 300 for s=10
+
+## Conclusion
+- The one-period expected payoff is E[R] = 1.05·I (a 5% gain per dollar). 
+- For all-in reinvestment over T rounds, E[W_T] = W0·1.05^T, but simulation tells us that the long-run return is likely to be 0. The difference in realized paths can be highly volatile due to compounding randomness (geometric mean < arithmetic mean).
+- Fixed-stake strategies concentrate outcomes: with stake s, E[W_T] = W0 + 0.05·s·T. Simulations align with these expectations and show much lower variance than all-in.
+
