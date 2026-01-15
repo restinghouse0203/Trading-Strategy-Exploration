@@ -315,6 +315,12 @@ sharpe <- mean(strat_ret) / sd(strat_ret) * sqrt(252)  # annualized
 hit_rate <- sum(strat_ret > 0) / length(strat_ret)
 
 cat("PnL:", pnl, "\nMaxDD:", max_dd, "\nSharpe:", sharpe, "\nHit Rate:", hit_rate)
+
+# Equity Curve Visualization
+plot(cum_pnl, type = "l", col = "blue", lwd = 2,
+     main = "Strategy Equity Curve",
+     xlab = "Time", ylab = "Cumulative PnL")
+grid()
 ```
 
 **Performance Discussion:**
