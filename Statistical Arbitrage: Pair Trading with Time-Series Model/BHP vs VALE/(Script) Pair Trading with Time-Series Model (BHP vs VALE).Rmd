@@ -49,13 +49,31 @@ Tony Au (Github: restinghouse0203)
 
 \bigskip
 
+\textbf{Introduction}
+
+This project aims to study the multivariate time series error correction statistical arbitrage model on spread pair trading. We specifically analyze the relationship between BHP and VALE, estimating a Vector Error Correction Model (VECM) to capture the cointegration dynamics. The study concludes with an out-of-sample backtest from 2007 to 2023 to evaluate the strategy's robustness in different market conditions.
+
+\textbf{Project Outline:}
+
+1.  **Data Preparation:** Loading and transforming daily data (2002-2006).
+2.  **Preliminary Analysis:** OLS estimation and residual analysis to check for stationarity.
+3.  **Cointegration Analysis:** Johansen Test and VECM estimation.
+4.  **Statistical Arbitrage Strategy:**
+    *   Methodology & Trading Rules.
+    *   In-Sample Implementation & Performance (vs Benchmark).
+    *   Out-of-Sample Backtest (2007-2023) with robust performance metrics.
+
 # 1. Data Preparation
 
 ```{r, message=FALSE, warning=FALSE}
 # Load necessary libraries and data
 library(urca)
+library(zoo) # Added for time series handling
 bhp = read.table("d-bhp0206.txt", header=T)
 vale = read.table("d-vale0206.txt", header=T)
+
+# Create Date object for plotting
+dates <- as.Date(paste(bhp$year, bhp$Mon, bhp$day, sep="-"), format="%Y-%m-%d")
 ```
 
 We perform a logarithmic transformation on the adjusted closing prices to stabilize variance.
@@ -244,12 +262,12 @@ We implement a mean-reversion strategy based on the spread \( w_t = \text{BHP}_t
     *   If \( w_t < \mu - \sigma_w \): Long 1 unit of BHP, Short 0.717 units of VALE (betting spread increases).
 *   **Exit:** When \( w_t \) reverts to the mean \( \mu \).
 
-## 4.2 Implementation
+## 4.2 Implementation (In-Sample)
 
-We compute the spread and the trading thresholds.
+We compute the spread, generate trading signals, and compare performance against a Buy-and-Hold benchmark.
 
 ```{r}
-# Compute spread w_t
+# 1. Compute spread w_t
 gamma <- 0.717 # w_t := bhp_t - \gamma*vale_t
 mu <- 1.829 # E(w_t)
 w_t <- xt[, "bhp"] - gamma * xt[, "vale"]
@@ -266,63 +284,266 @@ sd_eps_vale <- sd(res[, 2])
 cat("SD of w_t:", sd_w, "\n")
 cat("SD of ε_bhp:", sd_eps_bhp, "\n")
 cat("SD of ε_vale:", sd_eps_vale, "\n")
-```
 
-The spread process and thresholds are visualized below:
-
-```{r}
-# Plot parameters
-gamma <- 0.717
-mu <- 1.829
-w_t <- xt[, "bhp"] - gamma * xt[, "vale"]
-sd_w <- sd(w_t)
+# 2. Trading Thresholds
 upper <- mu + sd_w
 lower <- mu - sd_w
 
-# Plot spread
-plot(w_t, type="l", main="Spread Process (BHP - 0.717 * VALE)", ylab="Spread Value", xlab="Time")
-abline(h=mu, col="blue", lty=2)
-abline(h=upper, col="red", lty=3)
-abline(h=lower, col="orange", lty=3)
-legend("topright", c("Mean", "Upper Threshold (+1 SD)", "Lower Threshold (-1 SD)"), 
-       col=c("blue","red","orange"), lty=c(2,3,3))
-```
-
-## 4.3 Backtest Results
-
-We backtest the strategy over the sample period.
-
-```{r}
-# Backtest logic
-positions <- rep(0, length(w_t))  # 1: long spread, -1: short spread, 0: neutral
+# 3. Generate Signals (In-Sample)
+positions <- rep(0, length(w_t))
 for (t in 2:length(w_t)) {
   if (w_t[t-1] > upper) positions[t] <- -1
   else if (w_t[t-1] < lower) positions[t] <- 1
-  else if (positions[t-1] != 0 && abs(w_t[t-1] - mu) < 0.1 * sd_w) positions[t] <- 0  # exit near mean
+  else if (positions[t-1] != 0 && abs(w_t[t-1] - mu) < 0.1 * sd_w) positions[t] <- 0
   else positions[t] <- positions[t-1]
 }
 
-# Returns (assume daily log returns)
-ret_bhp <- diff(log(xt[, "bhp"]))
-ret_vale <- diff(log(xt[, "vale"]))
-strat_ret <- positions[2:length(positions)] * (ret_bhp - gamma * ret_vale)
+# 4. Calculate Returns
+# In-sample log returns
+ret_bhp <- diff(xt[, "bhp"]) # xt is already log prices
+ret_vale <- diff(xt[, "vale"])
 
-# Performance Metrics
+# Strategy Returns
+strat_ret <- positions[2:length(positions)] * (ret_bhp - gamma * ret_vale)
+strat_ret <- na.omit(strat_ret)
+
+# Benchmark Returns (50/50 Buy and Hold)
+bench_ret <- 0.5 * ret_bhp + 0.5 * ret_vale
+bench_ret <- na.omit(bench_ret)
+
+# 5. Performance Metrics
+# Strategy
 cum_pnl <- cumsum(strat_ret)
 pnl <- sum(strat_ret)
 max_dd <- min(cum_pnl - cummax(cum_pnl))
-sharpe <- mean(strat_ret) / sd(strat_ret) * sqrt(252)  # annualized
-hit_rate <- sum(strat_ret > 0) / length(strat_ret)
+sharpe <- mean(strat_ret) / sd(strat_ret) * sqrt(252)
+hit_rate <- sum(strat_ret > 0) / length(strat_ret[strat_ret != 0])
 
-cat("PnL:", pnl, "\nMaxDD:", max_dd, "\nSharpe:", sharpe, "\nHit Rate:", hit_rate)
+# Benchmark
+cum_bench <- cumsum(bench_ret)
+pnl_bench <- sum(bench_ret)
+sharpe_bench <- mean(bench_ret) / sd(bench_ret) * sqrt(252)
 
-# Equity Curve Visualization
-plot(cum_pnl, type = "l", col = "blue", lwd = 2,
-     main = "Strategy Equity Curve",
-     xlab = "Time", ylab = "Cumulative PnL")
+cat("\nIn-Sample Performance (2002-2006):\n")
+cat("Strategy PnL:", round(pnl, 4), " | Benchmark PnL:", round(pnl_bench, 4), "\n")
+cat("Strategy MaxDD:", round(max_dd, 4), "\n")
+cat("Strategy Sharpe:", round(sharpe, 4), " | Benchmark Sharpe:", round(sharpe_bench, 4), "\n")
+cat("Hit Rate:", round(hit_rate, 4), "\n")
+
+# 6. Visualization
+# Create zoo objects for plotting with dates
+# Note: w_t length matches dates, but returns are length-1
+w_zoo <- zoo(w_t, order.by = dates)
+cum_pnl_zoo <- zoo(cum_pnl, order.by = dates[-1])
+cum_bench_zoo <- zoo(cum_bench, order.by = dates[-1])
+
+# A. Spread Process
+plot(w_zoo, type="l", main="In-Sample Spread Process (BHP - 0.717 * VALE)", ylab="Spread Value", xlab="Time", col="darkgray")
+abline(h=mu, col="blue", lty=2)
+abline(h=upper, col="red", lty=3)
+abline(h=lower, col="orange", lty=3)
+
+# Add Signals
+time_index <- index(w_zoo)
+long_entries <- which(positions == 1 & c(0, positions[-length(positions)]) == 0)
+short_entries <- which(positions == -1 & c(0, positions[-length(positions)]) == 0)
+exits <- which(positions == 0 & c(0, positions[-length(positions)]) != 0)
+
+if(length(long_entries) > 0) points(time_index[long_entries], w_t[long_entries], col="green", pch=19, cex=0.6)
+if(length(short_entries) > 0) points(time_index[short_entries], w_t[short_entries], col="red", pch=19, cex=0.6)
+if(length(exits) > 0) points(time_index[exits], w_t[exits], col="black", pch=4, cex=0.6)
+
+legend("topright", c("Spread", "Mean", "Thresholds", "Entry", "Exit"), 
+       col=c("darkgray","blue","red", "green", "black"), lty=c(1,2,3,NA,NA), pch=c(NA,NA,NA,19,4))
+
+# B. Equity Curve
+plot(cum_pnl_zoo, type = "l", col = "blue", lwd = 2,
+     main = "In-Sample Equity Curve vs Benchmark",
+     xlab = "Time", ylab = "Cumulative PnL", ylim=range(c(cum_pnl, cum_bench)))
+lines(cum_bench_zoo, col="black", lty=2)
+legend("topleft", c("Strategy", "Benchmark"), col=c("blue", "black"), lty=c(1,2))
 grid()
 ```
 
-**Performance Discussion:**
+## 4.3 Out-of-Sample Backtest Results (2007-2023)
 
-The pairs trading strategy yields a total Profit and Loss (PnL) of 1.14 with an annualized Sharpe ratio of 1.69, indicating a favorable risk-adjusted return profile. However, the hit rate is approximately 32%, which suggests that the strategy's profitability relies on capturing a smaller number of large mean-reversion moves rather than a high frequency of small wins. The maximum drawdown of approximately 14% highlights the tail risk inherent in spread divergence, emphasizing the need for robust risk management or stop-loss mechanisms in live implementation.
+We perform out-of-sample backtesting using data from 2007 to 2023 obtained from Yahoo Finance.
+
+```{r, message=FALSE, warning=FALSE}
+# --- PART 1: FETCH DATA ---
+#install.packages("quantmod")
+library(quantmod)
+
+s_date <- "2007-01-01"
+e_date <- "2023-12-31"
+bhp_file <- "BHP_OS.csv"
+vale_file <- "VALE_OS.csv"
+
+BHP <- as.xts(read.zoo(bhp_file, header = TRUE, sep = ",", format = "%Y-%m-%d"))
+VALE <- as.xts(read.zoo(vale_file, header = TRUE, sep = ",", format = "%Y-%m-%d"))
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# --- PART 2: STRATEGY FUNCTIONS ---
+
+# Function to preprocess and calculate spread
+calculate_spread_os <- function(BHP_data, VALE_data, gamma) {
+  if (!exists("BHP_data") || !exists("VALE_data")) return(NULL)
+  
+  bhp_adj <- Ad(BHP_data)
+  vale_adj <- Ad(VALE_data)
+  
+  pair <- merge(bhp_adj, vale_adj, all = FALSE)
+  colnames(pair) <- c("bhp", "vale")
+  
+  # Log transformation
+  log_pair <- log(pair)
+  
+  # Calculate Spread
+  w_os <- log_pair$bhp - gamma * log_pair$vale
+  
+  list(w_os = w_os, log_pair = log_pair)
+}
+
+# Function to generate trading signals
+generate_signals_os <- function(w_os, mu, sd_w) {
+  upper <- mu + sd_w
+  lower <- mu - sd_w
+  
+  positions <- rep(0, length(w_os))
+  spread_val <- as.numeric(w_os)
+  
+  for (t in 2:length(w_os)) {
+    if (spread_val[t-1] > upper) {
+      positions[t] <- -1 
+    } else if (spread_val[t-1] < lower) {
+      positions[t] <- 1
+    } else if (positions[t-1] != 0 && abs(spread_val[t-1] - mu) < 0.1 * sd_w) {
+      positions[t] <- 0
+    } else {
+      positions[t] <- positions[t-1]
+    }
+  }
+  return(positions)
+}
+
+# Function to calculate performance metrics
+calculate_metrics_os <- function(positions, log_pair, gamma) {
+  ret_bhp <- diff(log_pair$bhp)
+  ret_vale <- diff(log_pair$vale)
+  
+  # Strategy Returns
+  strat_ret <- positions[2:length(positions)] * (ret_bhp - gamma * ret_vale)
+  strat_ret <- na.omit(strat_ret)
+  
+  # Benchmark Returns (50/50 Equal Weight)
+  bench_ret <- 0.5 * ret_bhp + 0.5 * ret_vale
+  bench_ret <- na.omit(bench_ret)
+  
+  # Metrics Strategy
+  cum_pnl <- cumsum(strat_ret)
+  pnl <- sum(strat_ret)
+  max_dd <- min(cum_pnl - cummax(cum_pnl))
+  sharpe <- mean(strat_ret) / sd(strat_ret) * sqrt(252)
+  hit_rate <- sum(strat_ret > 0) / length(strat_ret[strat_ret != 0])
+  
+  # Metrics Benchmark
+  cum_bench <- cumsum(bench_ret)
+  pnl_bench <- sum(bench_ret)
+  sharpe_bench <- mean(bench_ret) / sd(bench_ret) * sqrt(252)
+  
+  list(
+    strat_ret = strat_ret, bench_ret = bench_ret,
+    cum_pnl = cum_pnl, cum_bench = cum_bench,
+    pnl = pnl, pnl_bench = pnl_bench,
+    max_dd = max_dd,
+    sharpe = sharpe, sharpe_bench = sharpe_bench,
+    hit_rate = hit_rate
+  )
+}
+```
+
+
+```{r, message=FALSE, warning=FALSE}
+# --- PART 3: EXECUTION & VISUALIZATION ---
+
+if (exists("BHP") && exists("VALE")) {
+  # Parameters (from In-Sample)
+  gamma_is <- 0.717
+  mu_is <- 1.829
+  # sd_w from section 4.2 needs to be passed or hardcoded if not available globally in knitting context. 
+  # Assuming sd_w is available from previous chunks. If not, use approximation from text:
+  # sd_w value from 4.2 output. Let's assume it's available as 'sd_w'.
+  
+  # 1. Process Data
+  data_os <- calculate_spread_os(BHP, VALE, gamma_is)
+  w_os <- data_os$w_os
+  
+  # 2. Generate Signals
+  positions_os <- generate_signals_os(w_os, mu_is, sd_w)
+  
+  # 3. Calculate Metrics
+  res_os <- calculate_metrics_os(positions_os, data_os$log_pair, gamma_is)
+  
+  # 4. Print Results
+  cat("Out-of-Sample Results (2007-2023):\n")
+  cat("Strategy PnL:", round(res_os$pnl, 4), " | Benchmark PnL:", round(res_os$pnl_bench, 4), "\n")
+  cat("Strategy MaxDD:", round(res_os$max_dd, 4), "\n")
+  cat("Strategy Sharpe:", round(res_os$sharpe, 4), " | Benchmark Sharpe:", round(res_os$sharpe_bench, 4), "\n")
+  cat("Hit Rate:", round(res_os$hit_rate, 4), "\n")
+  
+  # 5. Visualization
+  # A. Spread
+  upper <- mu_is + sd_w
+  lower <- mu_is - sd_w
+  
+  plot(as.zoo(w_os), main="Out-of-Sample Spread with Signals", ylab="Spread", col="darkgray")
+  abline(h=mu_is, col="blue", lty=2)
+  abline(h=upper, col="red", lty=3)
+  abline(h=lower, col="orange", lty=3)
+  
+  # Add signal points
+  time_index <- index(as.zoo(w_os))
+  long_entries <- which(positions_os == 1 & c(0, positions_os[-length(positions_os)]) == 0)
+  short_entries <- which(positions_os == -1 & c(0, positions_os[-length(positions_os)]) == 0)
+  exits <- which(positions_os == 0 & c(0, positions_os[-length(positions_os)]) != 0)
+  
+  if(length(long_entries)>0) points(time_index[long_entries], w_os[long_entries], col="green", pch=19, cex=0.6)
+  if(length(short_entries)>0) points(time_index[short_entries], w_os[short_entries], col="red", pch=19, cex=0.6)
+  if(length(exits)>0) points(time_index[exits], w_os[exits], col="black", pch=4, cex=0.6)
+  
+  legend("topright", legend=c("Spread", "Mean", "Thresholds", "Long", "Short", "Exit"), 
+         col=c("darkgray", "blue", "red", "green", "red", "black"), 
+         lty=c(1, 2, 3, NA, NA, NA), pch=c(NA, NA, NA, 19, 19, 4), cex=0.8)
+  
+  # B. Equity Curve
+  plot(as.zoo(res_os$cum_pnl), main="Out-of-Sample Equity Curve", ylab="Cumulative PnL", col="blue", lwd=1.5,
+       ylim=range(c(res_os$cum_pnl, res_os$cum_bench)))
+  lines(as.zoo(res_os$cum_bench), col="black", lty=2)
+  legend("topleft", legend=c("Strategy", "Benchmark"), col=c("blue", "black"), lty=c(1, 2))
+  grid()
+  
+} else {
+  print("Data not available.")
+}
+```
+
+**Interpretation of Out-of-Sample Results:**
+
+The out-of-sample performance (2007-2023) is significantly worse than the in-sample period, highlighting the dangers of using static model parameters over long horizons.
+
+1.  **Poor Performance Metrics:**
+    *   **PnL (0.1922) & Sharpe (0.0462):** The strategy yielded almost zero risk-adjusted return over 16 years. This indicates the cointegration relationship identified in 2002-2006 effectively broke down or shifted regimes.
+    *   **Max Drawdown (-0.4817):** A 48% drawdown is catastrophic for a market-neutral strategy. This was likely caused by the spread diverging far beyond the fixed thresholds ($\mu \pm \sigma$) without reverting, forcing the strategy to hold losing positions for extended periods.
+    *   **Hit Rate (~50%):** A hit rate near 50% implies the entry signals were no better than a coin flip, further confirming that the "mean" $\mu=1.829$ was no longer the true equilibrium.
+
+2.  **Market Shocks & Structural Breaks:**
+    *   **2008 Financial Crisis:** Correlations often approach 1 during crises, but spreads can widen unpredictably due to liquidity constraints.
+    *   **Idiosyncratic Shocks (Vale):** Vale suffered massive dam collapses in **2015 (Mariana)** and **2019 (Brumadinho)**. These events caused massive, permanent structural breaks in Vale's price that were unrelated to general iron ore market dynamics (which drive BHP). The model, expecting a reversion to the 2002-2006 mean, would have taken aggressive losing positions against these drifts.
+
+3.  **Improvements:**
+    *   **Rolling Window Calibration:** Instead of fixed parameters, recalibrate $\gamma$ and $\mu$ using a rolling window (e.g., 1-year lookback) to adapt to new market regimes.
+    *   **Stop-Loss:** Implement a hard stop-loss (e.g., if spread deviates $> 3\sigma$) to close positions when the cointegration assumption is clearly violated.
+    *   **Kalman Filter:** Use a state-space model to dynamically estimate the time-varying hedge ratio $\gamma_t$ and mean $\mu_t$.
+    
